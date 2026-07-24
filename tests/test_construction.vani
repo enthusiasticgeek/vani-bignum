@@ -1,0 +1,36 @@
+// Tests for construction, string round-trip, and sign/predicates.
+// Run with:  vanic test tests/test_construction.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    let z: BigInt = bn_zero();
+    assert bn_is_zero(ref z);
+    assert bn_sign(ref z) == 0;
+    assert bn_to_str(ref z) == "0";
+
+    let a: BigInt = bn_from_i64(123);
+    assert bn_sign(ref a) == 1;
+    assert bn_to_i64(ref a) == 123;
+    assert bn_to_str(ref a) == "123";
+
+    let b: BigInt = bn_from_i64(0 - 456);
+    assert bn_sign(ref b) == 0 - 1;
+    assert bn_to_i64(ref b) == 0 - 456;
+    assert bn_to_str(ref b) == "-456";
+
+    // Multi-limb value (> 1e9, exercises more than one limb).
+    let big: BigInt = bn_from_i64(9999999999);
+    assert bn_to_i64(ref big) == 9999999999;
+    assert bn_to_str(ref big) == "9999999999";
+
+    // String round-trip.
+    let s1: BigInt = bn_from_str("123456789123456789");
+    assert bn_to_str(ref s1) == "123456789123456789";
+
+    let s2: BigInt = bn_from_str("-42");
+    assert bn_to_i64(ref s2) == 0 - 42;
+
+    print "construction ok";
+    return 0;
+}

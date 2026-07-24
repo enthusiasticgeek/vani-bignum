@@ -1,0 +1,688 @@
+// vani-bignum  v0.1.0 — arbitrary-precision integers
+//
+// IMPORTANT — do NOT reimplement vāṇी compiler builtins.
+// Already available as builtins (call directly, never redeclare here):
+//   push pop len vec str_byte_at str_pad_left i64_to_str
+//
+// No deps (self-contained) -- see [deps] in vani.toml.
+//
+// ENCODING: little-endian base-1e9 limbs (limbs[0] = least significant).
+// Chosen because (a) a single limb product is < 1e18, safely inside i64's
+// range (vāṇी has no i128 -- confirmed nothing wider than i64 exists, and
+// +/-/* trap on overflow rather than wrap, so every intermediate value in
+// this file must provably stay inside i64), and (b) base 1e9 makes decimal
+// string conversion trivial (9 digits per limb, no base-conversion math).
+//
+//   struct BigInt { limbs: Vec<i64>, sign: i64 }
+//
+// Invariant: no leading (most-significant, i.e. highest-index) zero limbs.
+// Zero itself is the canonical form sign=0, limbs=vec() (empty -- not
+// [0]). Every nonzero value has sign in {-1, 1} (matching the compiler's
+// own i64_signum convention) and a nonzero most-significant limb.
+//
+// NOT Copy (owns a Vec<i64>) -- contrast with vani-complex's Copy-struct
+// pattern. Every function takes ref/mut ref BigInt and returns BigInt by
+// value, matching vani-sparse's Vec-owning-struct convention.
+//
+// SIGN CONVENTION for division: bn_div_mod truncates toward zero (quotient
+// sign = sign(a) * sign(b), remainder sign = sign(a) when nonzero) --
+// deliberately matching vāṇी's native i64 `/`/`%` semantics (confirmed
+// sdiv/srem, C-style truncation) rather than floor division, so behavior
+// is predictable relative to the rest of the language.
+//
+// ALGORITHM NOTES:
+//  - bn_mul (schoolbook) propagates carry *immediately* after each single
+//    limb-product add, never accumulating multiple un-reduced products at
+//    one output position -- the overflow-safety-critical design choice
+//    (see bn_mul's own comment).
+//  - bn_div_mod is most-significant-limb-first long division, binary-
+//    searching each quotient digit in [0, BASE) against the running
+//    remainder. O(n^2 log BASE), not Knuth's Algorithm D -- deliberately
+//    simpler to get provably correct; same "correctness > speed" tradeoff
+//    already established elsewhere in this ecosystem (e.g. vani-compiler's
+//    own sort_by fallback).
+//  - bn_from_str parses digit-by-digit via repeated multiply-by-10 + add
+//    (str_byte_at + `- 48` for the digit value; no str-to-int builtin
+//    exists in vāṇी to reach for instead) -- O(n^2), same tradeoff.
+//
+// WCET (MAINT-1 discipline, see kosh-index/ROADMAP.md): every
+// #[wcet(cycles=N)] below is vanic check's own exact reported worst-case,
+// never hand-derived. Almost every function here loops over a Vec length
+// (a runtime value) -- unbounded under the checker's WCET model, so those
+// get a WCET *formula* comment instead of the attribute, matching
+// vani-calculus's `bisect` convention. Only fixed-shape functions
+// (bn_sign, bn_is_zero, bn_neg, ...) get a real #[wcet(cycles=N)].
+
+struct BigInt {
+    limbs: Vec<i64>,
+    sign: i64,
+}
+
+// ── Construction / IO ────────────────────────────────────────────────────
+
+#[bounded_stack(bytes = 88)]
+#[wcet(cycles = 90)]
+fn bn_zero() -> BigInt {
+    let limbs: Vec<i64> = vec();
+    return BigInt { limbs: limbs, sign: 0 };
+}
+
+// Builds from a plain i64 by peeling off base-1e9 limbs.
+#[bounded_stack(bytes = 264)]
+// NO #[wcet]: the while loop runs until n's magnitude is exhausted (at
+// most 3 iterations for any i64, but the bound isn't a `for` with a
+// const literal, so the checker's WCET model can't statically see it).
+// WCET formula: 20 + iterations * 20, iterations <= 3.
+fn bn_from_i64(n: i64) -> BigInt {
+    if n == 0 {
+        return bn_zero();
+    }
+    let sign: i64 = 1;
+    let mag: i64 = n;
+    if n < 0 {
+        sign = 0 - 1;
+        mag = 0 - n;
+    }
+    let limbs: Vec<i64> = vec();
+    let rest: i64 = mag;
+    while rest > 0 {
+        push(mut ref limbs, rest - (rest / 1000000000) * 1000000000);
+        rest = rest / 1000000000;
+    }
+    return BigInt { limbs: limbs, sign: sign };
+}
+
+// Decimal string -> BigInt. Accepts an optional leading '-'. No str-to-int
+// builtin exists in vāṇी, so this hand-parses byte by byte via
+// str_byte_at + repeated multiply-by-10-and-add (_bn_mul_small_i64 below).
+#[bounded_stack(bytes = 1057)]
+// NO #[wcet]: loop bound is len(s), a runtime value.
+// WCET formula: 20 + digit_count * (_bn_mul_small_i64's cost + bn_add's
+// cost), both of which are themselves runtime-Vec-length-bounded.
+fn bn_from_str(s: Str) -> BigInt {
+    let n: i64 = len(s) as i64;
+    if n == 0 {
+        return bn_zero();
+    }
+    let neg: bool = str_byte_at(s, 0) == 45;
+    let start: i64 = 0;
+    if neg {
+        start = 1;
+    }
+    let result: BigInt = bn_zero();
+    let i: i64 = start;
+    while i < n {
+        let d: i64 = str_byte_at(s, i) - 48;
+        result = _bn_add_small_after_mul10(result, d);
+        i = i + 1;
+    }
+    if neg {
+        result = bn_neg(ref result);
+    }
+    return result;
+}
+
+// result * 10 + d, where 0 <= d <= 9. Private helper for bn_from_str --
+// takes result by value (consumes it) since bn_from_str immediately
+// reassigns its `result` binding to this call's return value.
+#[bounded_stack(bytes = 808)]
+fn _bn_add_small_after_mul10(result: BigInt, d: i64) -> BigInt {
+    let scaled: BigInt = _bn_mul_small(ref result, 10);
+    let digit: BigInt = bn_from_i64(d);
+    return bn_add(ref scaled, ref digit);
+}
+
+// BigInt -> decimal string. Most-significant limb first, unpadded; every
+// subsequent (less significant) limb zero-padded to 9 digits.
+#[bounded_stack(bytes = 200)]
+// NO #[wcet]: loop bound is len(a.limbs), a runtime value.
+fn bn_to_str(a: ref BigInt) -> OwnedStr {
+    if a.sign == 0 {
+        return "0" + "";
+    }
+    let n: i64 = len(ref a.limbs) as i64;
+    let out: OwnedStr = "" + "";
+    if a.sign < 0 {
+        out = out + "-";
+    }
+    out = out + i64_to_str(a.limbs[n - 1]);
+    let i: i64 = n - 2;
+    while i >= 0 {
+        out = out + str_pad_left(i64_to_str(a.limbs[i]), 9, "0");
+        i = i - 1;
+    }
+    return out;
+}
+
+// BigInt -> i64. Reconstructs via real i64 +/*, which traps if the value
+// doesn't fit -- intentional, matching "everything traps on overflow"
+// rather than silently truncating.
+#[bounded_stack(bytes = 96)]
+// NO #[wcet]: loop bound is len(a.limbs), a runtime value.
+fn bn_to_i64(a: ref BigInt) -> i64 {
+    let n: i64 = len(ref a.limbs) as i64;
+    let acc: i64 = 0;
+    let i: i64 = n - 1;
+    while i >= 0 {
+        acc = acc * 1000000000 + a.limbs[i];
+        i = i - 1;
+    }
+    if a.sign < 0 {
+        acc = 0 - acc;
+    }
+    return acc;
+}
+
+// ── Sign / predicates ────────────────────────────────────────────────────
+
+#[bounded_stack(bytes = 48)]
+#[wcet(cycles = 10)]
+fn bn_sign(a: ref BigInt) -> i64 {
+    return a.sign;
+}
+
+#[bounded_stack(bytes = 41)]
+#[wcet(cycles = 13)]
+fn bn_is_zero(a: ref BigInt) -> bool {
+    return a.sign == 0;
+}
+
+// Copies the limb Vec (owned result, independent of `a`).
+#[bounded_stack(bytes = 208)]
+// NO #[wcet]: the limb copy loop is bounded by len(a.limbs), a runtime value.
+fn bn_neg(a: ref BigInt) -> BigInt {
+    let limbs: Vec<i64> = _bn_copy_limbs(ref a.limbs);
+    return BigInt { limbs: limbs, sign: 0 - a.sign };
+}
+
+#[bounded_stack(bytes = 224)]
+// NO #[wcet]: see bn_neg.
+fn bn_abs(a: ref BigInt) -> BigInt {
+    let limbs: Vec<i64> = _bn_copy_limbs(ref a.limbs);
+    let s: i64 = a.sign;
+    if s < 0 {
+        s = 0 - s;
+    }
+    return BigInt { limbs: limbs, sign: s };
+}
+
+#[bounded_stack(bytes = 112)]
+// NO #[wcet]: loop bound is len(src), a runtime value.
+fn _bn_copy_limbs(src: ref Vec<i64>) -> Vec<i64> {
+    let out: Vec<i64> = vec();
+    let n: i64 = len(src) as i64;
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, src[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// ── Magnitude helpers (private; assume canonical inputs -- no leading
+// zero limbs -- and produce canonical output) ────────────────────────────
+
+// -1 / 0 / 1 comparing magnitudes only (sign ignored).
+#[bounded_stack(bytes = 120)]
+// NO #[wcet]: loop bound is len(a)/len(b), a runtime value.
+fn _bn_mag_cmp(a: ref Vec<i64>, b: ref Vec<i64>) -> i64 {
+    let na: i64 = len(a) as i64;
+    let nb: i64 = len(b) as i64;
+    if na != nb {
+        if na < nb {
+            return 0 - 1;
+        }
+        return 1;
+    }
+    let i: i64 = na - 1;
+    while i >= 0 {
+        if a[i] != b[i] {
+            if a[i] < b[i] {
+                return 0 - 1;
+            }
+            return 1;
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// |a| + |b|, base-1e9 limb-wise add with carry.
+#[bounded_stack(bytes = 208)]
+// NO #[wcet]: loop bound is max(len(a),len(b)), a runtime value.
+fn _bn_mag_add(a: ref Vec<i64>, b: ref Vec<i64>) -> Vec<i64> {
+    let na: i64 = len(a) as i64;
+    let nb: i64 = len(b) as i64;
+    let n: i64 = na;
+    if nb > n {
+        n = nb;
+    }
+    let result: Vec<i64> = vec();
+    let carry: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        let av: i64 = 0;
+        if i < na {
+            av = a[i];
+        }
+        let bv: i64 = 0;
+        if i < nb {
+            bv = b[i];
+        }
+        let s: i64 = av + bv + carry;
+        if s >= 1000000000 {
+            s = s - 1000000000;
+            carry = 1;
+        } else {
+            carry = 0;
+        }
+        push(mut ref result, s);
+        i = i + 1;
+    }
+    if carry > 0 {
+        push(mut ref result, carry);
+    }
+    return result;
+}
+
+// |a| - |b|, assumes |a| >= |b| (caller's responsibility -- bn_sub picks
+// the operand order). Strips any resulting leading zero limbs.
+#[bounded_stack(bytes = 320)]
+// NO #[wcet]: loop bound is len(a), a runtime value.
+fn _bn_mag_sub(a: ref Vec<i64>, b: ref Vec<i64>) -> Vec<i64> {
+    let na: i64 = len(a) as i64;
+    let nb: i64 = len(b) as i64;
+    let result: Vec<i64> = vec();
+    let borrow: i64 = 0;
+    let i: i64 = 0;
+    while i < na {
+        let av: i64 = a[i];
+        let bv: i64 = 0;
+        if i < nb {
+            bv = b[i];
+        }
+        let d: i64 = av - bv - borrow;
+        if d < 0 {
+            d = d + 1000000000;
+            borrow = 1;
+        } else {
+            borrow = 0;
+        }
+        push(mut ref result, d);
+        i = i + 1;
+    }
+    return _bn_strip(result);
+}
+
+// Removes trailing (most-significant, i.e. highest-index) zero limbs.
+#[bounded_stack(bytes = 136)]
+// NO #[wcet]: loop bound is len(limbs), a runtime value.
+fn _bn_strip(limbs: Vec<i64>) -> Vec<i64> {
+    let result: Vec<i64> = limbs;
+    let n: i64 = len(ref result) as i64;
+    while n > 0 {
+        if result[n - 1] == 0 {
+            pop(mut ref result);
+            n = n - 1;
+        } else {
+            return result;
+        }
+    }
+    return result;
+}
+
+// Deep copy (owned result, independent of `x`).
+#[bounded_stack(bytes = 208)]
+// NO #[wcet]: see bn_neg.
+fn _bn_copy(x: ref BigInt) -> BigInt {
+    let limbs: Vec<i64> = _bn_copy_limbs(ref x.limbs);
+    return BigInt { limbs: limbs, sign: x.sign };
+}
+
+// ── Comparison ────────────────────────────────────────────────────────────
+
+// -1 / 0 / 1. Same signs -> compare magnitudes (flipped for negatives,
+// via `mag_cmp * a.sign`); different signs -> the positive one wins
+// outright (sign field alone decides, mag_cmp * a.sign only applies once
+// signs are known equal, so it's computed only in that branch).
+#[bounded_stack(bytes = 208)]
+// NO #[wcet]: calls _bn_mag_cmp, whose loop bound is a runtime Vec length.
+fn bn_cmp(a: ref BigInt, b: ref BigInt) -> i64 {
+    if a.sign != b.sign {
+        if a.sign < b.sign {
+            return 0 - 1;
+        }
+        return 1;
+    }
+    if a.sign == 0 {
+        return 0;
+    }
+    let mag: i64 = _bn_mag_cmp(ref a.limbs, ref b.limbs);
+    return mag * a.sign;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_eq(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) == 0;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_ne(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) != 0;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_lt(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) < 0;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_le(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) <= 0;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_gt(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) > 0;
+}
+
+#[bounded_stack(bytes = 257)]
+// NO #[wcet]: see bn_cmp.
+fn bn_ge(a: ref BigInt, b: ref BigInt) -> bool {
+    return bn_cmp(a, b) >= 0;
+}
+
+interface Eq {
+    fn eq(self: ref BigInt, other: ref BigInt) -> bool;
+}
+
+implement Eq for BigInt {
+    fn eq(self: ref BigInt, other: ref BigInt) -> bool {
+        return bn_cmp(self, other) == 0;
+    }
+}
+
+// ── Arithmetic ───────────────────────────────────────────────────────────
+
+#[bounded_stack(bytes = 640)]
+// NO #[wcet]: calls _bn_mag_add/_bn_mag_cmp/_bn_mag_sub, all runtime-Vec-
+// length-bounded.
+fn bn_add(a: ref BigInt, b: ref BigInt) -> BigInt {
+    if a.sign == 0 {
+        return _bn_copy(b);
+    }
+    if b.sign == 0 {
+        return _bn_copy(a);
+    }
+    if a.sign == b.sign {
+        let sum_limbs: Vec<i64> = _bn_mag_add(ref a.limbs, ref b.limbs);
+        return BigInt { limbs: sum_limbs, sign: a.sign };
+    }
+    let cmp: i64 = _bn_mag_cmp(ref a.limbs, ref b.limbs);
+    if cmp == 0 {
+        return bn_zero();
+    }
+    if cmp > 0 {
+        let a_minus_b: Vec<i64> = _bn_mag_sub(ref a.limbs, ref b.limbs);
+        return BigInt { limbs: a_minus_b, sign: a.sign };
+    }
+    let b_minus_a: Vec<i64> = _bn_mag_sub(ref b.limbs, ref a.limbs);
+    return BigInt { limbs: b_minus_a, sign: b.sign };
+}
+
+#[bounded_stack(bytes = 752)]
+// NO #[wcet]: see bn_add (bn_sub composes bn_neg + bn_add).
+fn bn_sub(a: ref BigInt, b: ref BigInt) -> BigInt {
+    let neg_b: BigInt = bn_neg(b);
+    return bn_add(a, ref neg_b);
+}
+
+// Schoolbook multiply, base 1e9. Carry is propagated *immediately* after
+// each single limb-product add (never accumulating multiple un-reduced
+// products at one output position) -- the overflow-safety-critical
+// design choice: a.limbs[i]*b.limbs[j] is < 1e18, plus the existing
+// (already-normalized, <1e9) result slot and an incoming carry (<1e9)
+// stays safely inside i64's ~9.2e18 range. The end-of-row carry-out is
+// cascaded via its own small loop (not a single un-looped add), since
+// that boundary limb can also hold carry contributed by an *earlier*
+// row -- a single add there could itself need to carry further.
+#[bounded_stack(bytes = 472)]
+// NO #[wcet]: loop bounds are len(a.limbs)/len(b.limbs), runtime values.
+fn bn_mul(a: ref BigInt, b: ref BigInt) -> BigInt {
+    if a.sign == 0 {
+        return bn_zero();
+    }
+    if b.sign == 0 {
+        return bn_zero();
+    }
+    let na: i64 = len(ref a.limbs) as i64;
+    let nb: i64 = len(ref b.limbs) as i64;
+    let result: Vec<i64> = vec();
+    let total: i64 = na + nb;
+    let k: i64 = 0;
+    while k < total {
+        push(mut ref result, 0);
+        k = k + 1;
+    }
+    let i: i64 = 0;
+    while i < na {
+        let carry: i64 = 0;
+        let j: i64 = 0;
+        while j < nb {
+            let prod: i64 = a.limbs[i] * b.limbs[j] + result[i + j] + carry;
+            set(mut ref result, i + j, prod - (prod / 1000000000) * 1000000000);
+            carry = prod / 1000000000;
+            j = j + 1;
+        }
+        let pos: i64 = i + nb;
+        let c: i64 = carry;
+        while c > 0 {
+            let s: i64 = result[pos] + c;
+            set(mut ref result, pos, s - (s / 1000000000) * 1000000000);
+            c = s / 1000000000;
+            pos = pos + 1;
+        }
+        i = i + 1;
+    }
+    let stripped: Vec<i64> = _bn_strip(result);
+    let sign: i64 = a.sign * b.sign;
+    return BigInt { limbs: stripped, sign: sign };
+}
+
+// Multiply by a single limb-range multiplier k (0 <= k <= 1e9 -- up to
+// and including BASE itself is safe: a.limbs[i] < 1e9, so
+// a.limbs[i]*k <= (1e9-1)*1e9 ~= 9.99...e17, safely inside i64). Private
+// helper shared by bn_from_str (multiply-by-10-and-add-digit) and
+// bn_div_mod's per-limb quotient-digit binary search (multiply the
+// divisor by a candidate digit in [0, BASE)).
+#[bounded_stack(bytes = 384)]
+// NO #[wcet]: loop bound is len(a.limbs), a runtime value.
+fn _bn_mul_small(a: ref BigInt, k: i64) -> BigInt {
+    if a.sign == 0 {
+        return bn_zero();
+    }
+    if k == 0 {
+        return bn_zero();
+    }
+    let n: i64 = len(ref a.limbs) as i64;
+    let result: Vec<i64> = vec();
+    let carry: i64 = 0;
+    let i: i64 = 0;
+    while i < n {
+        let prod: i64 = a.limbs[i] * k + carry;
+        push(mut ref result, prod - (prod / 1000000000) * 1000000000);
+        carry = prod / 1000000000;
+        i = i + 1;
+    }
+    while carry > 0 {
+        push(mut ref result, carry - (carry / 1000000000) * 1000000000);
+        carry = carry / 1000000000;
+    }
+    let stripped: Vec<i64> = _bn_strip(result);
+    return BigInt { limbs: stripped, sign: a.sign };
+}
+
+// r * BASE + digit -- shifts r's limbs up by one position and drops
+// `digit` into the new least-significant limb. Used by the long-division
+// loop below to "bring down" the next digit of the dividend.
+#[bounded_stack(bytes = 304)]
+// NO #[wcet]: loop bound is len(r.limbs), a runtime value.
+fn _bn_shift_and_add_digit(r: ref BigInt, digit: i64) -> BigInt {
+    let n: i64 = len(ref r.limbs) as i64;
+    let out: Vec<i64> = vec();
+    push(mut ref out, digit);
+    let i: i64 = 0;
+    while i < n {
+        push(mut ref out, r.limbs[i]);
+        i = i + 1;
+    }
+    let stripped: Vec<i64> = _bn_strip(out);
+    let sign: i64 = 0;
+    if (len(ref stripped) as i64) > 0 {
+        sign = 1;
+    }
+    return BigInt { limbs: stripped, sign: sign };
+}
+
+// Reverses limb order (used to flip a most-significant-first-collected
+// quotient into the canonical least-significant-first storage order).
+#[bounded_stack(bytes = 128)]
+// NO #[wcet]: loop bound is len(v), a runtime value.
+fn _bn_reverse(v: Vec<i64>) -> Vec<i64> {
+    let n: i64 = len(ref v) as i64;
+    let out: Vec<i64> = vec();
+    let i: i64 = n - 1;
+    while i >= 0 {
+        push(mut ref out, v[i]);
+        i = i - 1;
+    }
+    return out;
+}
+
+struct BnDivMod {
+    quot: BigInt,
+    rem: BigInt,
+}
+
+// Long division of two *nonnegative* BigInts (sign in {0,1}); `b` must
+// be nonzero (caller's responsibility -- enforced by bn_div_mod's
+// assert). Most-significant-limb-first: for each limb of `a` (MSB to
+// LSB), bring down the next digit into a running remainder, then binary-
+// search the largest quotient digit q in [0, BASE) with q*b <= remainder.
+// O(n^2 log BASE) -- not Knuth's Algorithm D, which needs a single-digit
+// estimate-plus-correction step that's meaningfully harder to get
+// provably right; this is simple and directly verifiable by the
+// invariant it maintains (q*b <= remainder < (q+1)*b at every step).
+#[bounded_stack(bytes = 1192)]
+// NO #[wcet]: outer loop bound is len(a.limbs); inner binary search is
+// bounded by log2(BASE) ~= 30 iterations (a real bound, but not
+// expressible to the checker's WCET model without a `for` over a const).
+fn _bn_divmod_nonneg(a: ref BigInt, b: ref BigInt) -> BnDivMod {
+    if _bn_mag_cmp(ref a.limbs, ref b.limbs) < 0 {
+        return BnDivMod { quot: bn_zero(), rem: _bn_copy(a) };
+    }
+    let na: i64 = len(ref a.limbs) as i64;
+    let quot_rev: Vec<i64> = vec();
+    let remainder: BigInt = bn_zero();
+    let i: i64 = na - 1;
+    while i >= 0 {
+        remainder = _bn_shift_and_add_digit(ref remainder, a.limbs[i]);
+        let lo: i64 = 0;
+        let hi: i64 = 999999999;
+        let q: i64 = 0;
+        while lo <= hi {
+            let mid: i64 = lo + (hi - lo) / 2;
+            let candidate: BigInt = _bn_mul_small(b, mid);
+            if bn_le(ref candidate, ref remainder) {
+                q = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        if q > 0 {
+            let qb: BigInt = _bn_mul_small(b, q);
+            remainder = bn_sub(ref remainder, ref qb);
+        }
+        push(mut ref quot_rev, q);
+        i = i - 1;
+    }
+    let quot_limbs: Vec<i64> = _bn_strip(_bn_reverse(quot_rev));
+    let qsign: i64 = 0;
+    if (len(ref quot_limbs) as i64) > 0 {
+        qsign = 1;
+    }
+    let quot: BigInt = BigInt { limbs: quot_limbs, sign: qsign };
+    return BnDivMod { quot: quot, rem: remainder };
+}
+
+// Truncating division (toward zero, matching vāṇी's native i64 `/`/`%`):
+// quotient sign = sign(a)*sign(b), remainder sign = sign(a) (0 if the
+// remainder is 0). `b` must be nonzero.
+#[bounded_stack(bytes = 1464)]
+// NO #[wcet]: see _bn_divmod_nonneg.
+fn bn_div_mod(a: ref BigInt, b: ref BigInt) -> BnDivMod {
+    assert b.sign != 0;
+    let abs_a: BigInt = bn_abs(a);
+    let abs_b: BigInt = bn_abs(b);
+    let raw: BnDivMod = _bn_divmod_nonneg(ref abs_a, ref abs_b);
+    let q_sign: i64 = 0;
+    if raw.quot.sign != 0 {
+        q_sign = a.sign * b.sign;
+    }
+    let r_sign: i64 = 0;
+    if raw.rem.sign != 0 {
+        r_sign = a.sign;
+    }
+    let quot: BigInt = _bn_with_sign(raw.quot, q_sign);
+    let rem: BigInt = _bn_with_sign(raw.rem, r_sign);
+    return BnDivMod { quot: quot, rem: rem };
+}
+
+// Rebuilds a BigInt with a different sign, reusing `x`'s limbs by value
+// (consumes `x`; used where the limbs are already correct and only the
+// sign needs to change, e.g. after a magnitude-only division result gets
+// the caller's true sign applied).
+#[bounded_stack(bytes = 104)]
+#[wcet(cycles = 13)]
+fn _bn_with_sign(x: BigInt, sign: i64) -> BigInt {
+    return BigInt { limbs: x.limbs, sign: sign };
+}
+
+#[bounded_stack(bytes = 1576)]
+// NO #[wcet]: see bn_div_mod.
+fn bn_div(a: ref BigInt, b: ref BigInt) -> BigInt {
+    let r: BnDivMod = bn_div_mod(a, b);
+    return r.quot;
+}
+
+#[bounded_stack(bytes = 1576)]
+// NO #[wcet]: see bn_div_mod.
+fn bn_mod(a: ref BigInt, b: ref BigInt) -> BigInt {
+    let r: BnDivMod = bn_div_mod(a, b);
+    return r.rem;
+}
+
+// ── GCD ──────────────────────────────────────────────────────────────────
+
+// Euclidean algorithm via repeated bn_div_mod. Always returns a
+// nonnegative result (matching the mathematical convention gcd(a,b) >= 0
+// regardless of a/b's signs); gcd(0, 0) = 0.
+#[bounded_stack(bytes = 1704)]
+// NO #[wcet]: loop count depends on the operands' values (Euclidean
+// algorithm step count), not expressible to the checker's WCET model.
+fn bn_gcd(a: ref BigInt, b: ref BigInt) -> BigInt {
+    let x: BigInt = bn_abs(a);
+    let y: BigInt = bn_abs(b);
+    while y.sign != 0 {
+        let r: BnDivMod = bn_div_mod(ref x, ref y);
+        x = y;
+        y = r.rem;
+    }
+    return x;
+}

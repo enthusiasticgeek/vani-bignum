@@ -1,0 +1,75 @@
+// Tests for add/sub/mul, including genuinely multi-limb cases that
+// exercise carry propagation across limb boundaries (not just
+// single-limb arithmetic).
+// Run with:  vanic test tests/test_arithmetic.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // Small add/sub, cross-checked against plain i64 arithmetic.
+    let a: BigInt = bn_from_i64(123);
+    let b: BigInt = bn_from_i64(456);
+    let s: BigInt = bn_add(ref a, ref b);
+    assert bn_to_i64(ref s) == 579;
+
+    let d: BigInt = bn_sub(ref a, ref b);
+    assert bn_to_i64(ref d) == 0 - 333;
+
+    // Sign combinations.
+    let neg_a: BigInt = bn_from_i64(0 - 123);
+    let s2: BigInt = bn_add(ref neg_a, ref b);
+    assert bn_to_i64(ref s2) == 333;
+
+    let s3: BigInt = bn_add(ref neg_a, ref neg_a);
+    assert bn_to_i64(ref s3) == 0 - 246;
+
+    // Add across a limb boundary (base 1e9): 999999999 + 1 = 1000000000.
+    let near_base: BigInt = bn_from_i64(999999999);
+    let one: BigInt = bn_from_i64(1);
+    let carried: BigInt = bn_add(ref near_base, ref one);
+    assert bn_to_str(ref carried) == "1000000000";
+
+    // Sub across a limb boundary: 1000000000 - 1 = 999999999.
+    let back: BigInt = bn_sub(ref carried, ref one);
+    assert bn_to_str(ref back) == "999999999";
+
+    // Exact cancellation -> zero, sign must be 0.
+    let zero_result: BigInt = bn_sub(ref a, ref a);
+    assert bn_is_zero(ref zero_result);
+    assert bn_sign(ref zero_result) == 0;
+
+    // Small multiply, cross-checked against plain i64.
+    let m: BigInt = bn_mul(ref a, ref b);
+    assert bn_to_i64(ref m) == 123 * 456;
+
+    // Multi-limb multiply: (1e9 - 1) * (1e9 - 1) = 999999998000000001,
+    // hand-computed: (1e9-1)^2 = 1e18 - 2e9 + 1 = 999999998000000001.
+    let big_a: BigInt = bn_from_i64(999999999);
+    let big_b: BigInt = bn_from_i64(999999999);
+    let big_m: BigInt = bn_mul(ref big_a, ref big_b);
+    assert bn_to_str(ref big_m) == "999999998000000001";
+
+    // 15-digit x 15-digit product via decimal-string construction (past
+    // bn_to_i64's safe range for the operands, so cross-check via string
+    // instead of round-tripping through i64). Reference value computed
+    // with Python (`123456789012345 * 987654321098765`), not by hand.
+    let x: BigInt = bn_from_str("123456789012345");
+    let y: BigInt = bn_from_str("987654321098765");
+    let xy: BigInt = bn_mul(ref x, ref y);
+    assert bn_to_str(ref xy) == "121932631137021071359549253925";
+
+    // Negative * positive sign rule.
+    let neg_x: BigInt = bn_neg(ref x);
+    let xy_neg: BigInt = bn_mul(ref neg_x, ref y);
+    assert bn_sign(ref xy_neg) == 0 - 1;
+    let xy_neg_abs: BigInt = bn_abs(ref xy_neg);
+    assert bn_to_str(ref xy_neg_abs) == "121932631137021071359549253925";
+
+    // Multiply by zero.
+    let z: BigInt = bn_zero();
+    let mz: BigInt = bn_mul(ref x, ref z);
+    assert bn_is_zero(ref mz);
+
+    print "arithmetic ok";
+    return 0;
+}

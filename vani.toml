@@ -1,0 +1,12 @@
+[package]
+name    = "bignum"
+version = "0.1.0"
+entry   = "src/lib.vani"
+authors = "enthusiasticgeek"
+license = "MIT"
+description = "Arbitrary-precision integers for vāṇी: base-1e9 digit-array arithmetic (add/sub/mul/div/mod/cmp/gcd), pure vāṇी, no compiler support needed. Numeric foundation for the planned symbolic-math tier."
+registry = "kosh"
+
+[deps]
+# No external deps -- digit-array arithmetic is built entirely on i64/Vec<i64>
+# and string builtins already provided by the vāṇी compiler.

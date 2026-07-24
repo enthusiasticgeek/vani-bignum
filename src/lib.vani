@@ -401,6 +401,14 @@ interface Eq {
     fn eq(self: ref BigInt, other: ref BigInt) -> bool;
 }
 
+// NOTE: `vanic audit-safety` reports `BigInt_eq` (this method, hoisted)
+// as eligible for `#[bounded_stack(bytes = 257)]` -- but the parser
+// rejects `#[attr]`-prefixed items inside `implement` blocks ("expected
+// 'fn'"), unlike `module` blocks (which do support this, per Phase 3 of
+// vani-compiler's kosh namespacing arc). Confirmed real parser gap, not
+// an omission -- there is currently no syntax position where this
+// attribute could go. Published with `--allow-partial-safety-coverage`
+// for this one function; tracked upstream as BUG-4.
 implement Eq for BigInt {
     fn eq(self: ref BigInt, other: ref BigInt) -> bool {
         return bn_cmp(self, other) == 0;

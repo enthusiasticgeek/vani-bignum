@@ -1,0 +1,39 @@
+// Tests for bn_cmp and the comparison wrappers, plus the `==`/`!=`
+// operator sugar via `implement Eq for BigInt`.
+// Run with:  vanic test tests/test_comparison.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    let a: BigInt = bn_from_i64(100);
+    let b: BigInt = bn_from_i64(200);
+    let c: BigInt = bn_from_i64(100);
+    let neg: BigInt = bn_from_i64(0 - 50);
+
+    assert bn_cmp(ref a, ref b) == 0 - 1;
+    assert bn_cmp(ref b, ref a) == 1;
+    assert bn_cmp(ref a, ref c) == 0;
+
+    assert bn_lt(ref a, ref b);
+    assert !bn_lt(ref b, ref a);
+    assert bn_le(ref a, ref c);
+    assert bn_gt(ref b, ref a);
+    assert bn_ge(ref a, ref c);
+    assert bn_eq(ref a, ref c);
+    assert bn_ne(ref a, ref b);
+
+    // Negative vs positive.
+    assert bn_lt(ref neg, ref a);
+    assert bn_gt(ref a, ref neg);
+
+    // Negative magnitude ordering is inverted: -50 > -100.
+    let neg2: BigInt = bn_from_i64(0 - 100);
+    assert bn_gt(ref neg, ref neg2);
+
+    // `==`/`!=` operator sugar via implement Eq.
+    assert a == c;
+    assert a != b;
+
+    print "comparison ok";
+    return 0;
+}

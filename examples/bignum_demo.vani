@@ -1,0 +1,32 @@
+// 30! computed via repeated bn_mul, and a GCD -- a quick tour of
+// vani-bignum's core arithmetic on values well past i64's ~9.2e18 range.
+// Run with:  vanic run examples/bignum_demo.vani
+
+use "../src/lib.vani";
+
+fn bn_factorial(n: i64) -> BigInt {
+    let result: BigInt = bn_from_i64(1);
+    let i: i64 = 2;
+    while i <= n {
+        let term: BigInt = bn_from_i64(i);
+        result = bn_mul(ref result, ref term);
+        i = i + 1;
+    }
+    return result;
+}
+
+fn main() -> i64 {
+    let f30: BigInt = bn_factorial(30);
+    print "30! =";
+    print bn_to_str(ref f30);
+    // Reference value from Python's math.factorial(30).
+    assert bn_to_str(ref f30) == "265252859812191058636308480000000";
+
+    let a: BigInt = bn_from_str("123456789012345678901234567890");
+    let b: BigInt = bn_from_str("987654321098765432109876543210");
+    let g: BigInt = bn_gcd(ref a, ref b);
+    print "gcd =";
+    print bn_to_str(ref g);
+
+    return 0;
+}

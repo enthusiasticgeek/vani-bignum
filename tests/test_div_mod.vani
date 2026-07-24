@@ -1,0 +1,62 @@
+// Tests for bn_div_mod / bn_div / bn_mod. Reference values for the
+// small cases are C-truncating-division by hand; the large cases are
+// computed with Python (`a // b` / `a % b` adjusted to truncate-toward-
+// zero, matching this package's documented sign convention) rather than
+// by hand, then cross-checked here via the round-trip identity
+// bn_mul(q, b) + r == a.
+// Run with:  vanic test tests/test_div_mod.vani
+
+use "../src/lib.vani";
+
+fn check_case(a: i64, b: i64, expect_q: i64, expect_r: i64) -> i64 {
+    let ba: BigInt = bn_from_i64(a);
+    let bb: BigInt = bn_from_i64(b);
+    let r: BnDivMod = bn_div_mod(ref ba, ref bb);
+    assert bn_to_i64(ref r.quot) == expect_q;
+    assert bn_to_i64(ref r.rem) == expect_r;
+    let q2: BigInt = bn_div(ref ba, ref bb);
+    let r2: BigInt = bn_mod(ref ba, ref bb);
+    assert bn_to_i64(ref q2) == expect_q;
+    assert bn_to_i64(ref r2) == expect_r;
+    return 0;
+}
+
+fn main() -> i64 {
+    // Truncating (C-style) division/modulo -- hand-verified.
+    let _: i64 = check_case(17, 5, 3, 2);
+    let _: i64 = check_case(0 - 17, 5, 0 - 3, 0 - 2);
+    let _: i64 = check_case(17, 0 - 5, 0 - 3, 2);
+    let _: i64 = check_case(0 - 17, 0 - 5, 3, 0 - 2);
+    let _: i64 = check_case(100, 10, 10, 0);
+    let _: i64 = check_case(7, 100, 0, 7);
+    let _: i64 = check_case(0, 5, 0, 0);
+
+    // Large-number division: identity check against bn_mul + bn_add,
+    // not a hand-typed expected string, since the point is exercising
+    // the long-division algorithm across many quotient digits.
+    let a: BigInt = bn_from_str("123456789012345678901234567890");
+    let b: BigInt = bn_from_str("987654321");
+    let r: BnDivMod = bn_div_mod(ref a, ref b);
+    // Reference values computed with Python (a // b, a % b): not
+    // hand-computed, this is exactly the case hand computation isn't
+    // trustworthy for.
+    assert bn_to_str(ref r.quot) == "124999998873437499901";
+    assert bn_to_i64(ref r.rem) == 574845669;
+    // Round-trip identity: q*b + r == a.
+    let qb: BigInt = bn_mul(ref r.quot, ref b);
+    let reconstructed: BigInt = bn_add(ref qb, ref r.rem);
+    assert bn_eq(ref reconstructed, ref a);
+
+    // Same large case, negated dividend -- sign convention check
+    // (quotient sign = sign(a)*sign(b), remainder sign = sign(a)).
+    let neg_a: BigInt = bn_neg(ref a);
+    let r2: BnDivMod = bn_div_mod(ref neg_a, ref b);
+    assert bn_to_str(ref r2.quot) == "-124999998873437499901";
+    assert bn_to_i64(ref r2.rem) == 0 - 574845669;
+    let qb2: BigInt = bn_mul(ref r2.quot, ref b);
+    let reconstructed2: BigInt = bn_add(ref qb2, ref r2.rem);
+    assert bn_eq(ref reconstructed2, ref neg_a);
+
+    print "div_mod ok";
+    return 0;
+}

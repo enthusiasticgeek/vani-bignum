@@ -1,0 +1,41 @@
+// Tests for bn_gcd -- also the composed multi-function validation test
+// (chains bn_div_mod in a loop), per this ecosystem's "write the example
+// that chains functions together before calling a module done"
+// discipline. Small-case reference values hand-verified; the large case
+// is computed with Python's math.gcd, not by hand.
+// Run with:  vanic test tests/test_gcd.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    let a: BigInt = bn_from_i64(48);
+    let b: BigInt = bn_from_i64(18);
+    let g: BigInt = bn_gcd(ref a, ref b);
+    assert bn_to_i64(ref g) == 6;
+
+    // gcd(0, 0) = 0.
+    let z1: BigInt = bn_zero();
+    let z2: BigInt = bn_zero();
+    let gz: BigInt = bn_gcd(ref z1, ref z2);
+    assert bn_is_zero(ref gz);
+
+    // gcd(x, 0) = |x|.
+    let x: BigInt = bn_from_i64(0 - 30);
+    let gz2: BigInt = bn_gcd(ref x, ref z1);
+    assert bn_to_i64(ref gz2) == 30;
+
+    // Negative operands -- gcd is always nonnegative.
+    let na: BigInt = bn_from_i64(0 - 1071);
+    let nb: BigInt = bn_from_i64(462);
+    let g2: BigInt = bn_gcd(ref na, ref nb);
+    assert bn_to_i64(ref g2) == 21;
+
+    // Large-number case (Python's math.gcd, not hand-computed).
+    let big1: BigInt = bn_from_str("123456789012345678901234567890");
+    let big2: BigInt = bn_from_str("987654321098765432109876543210");
+    let g3: BigInt = bn_gcd(ref big1, ref big2);
+    assert bn_to_str(ref g3) == "9000000000900000000090";
+
+    print "gcd ok";
+    return 0;
+}

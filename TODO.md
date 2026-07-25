@@ -78,12 +78,22 @@
       passes clean on every test file
 
 ### Known issues
-- [x] Documented (not fixed): `--backend=c` can abort with "loop bound out
-      of vec range" on `_bn_mag_add` and anything that calls it -- a real
-      C-backend optimizer-hint bug, tracked as BUG-3 in
-      `vani-compiler/docs/TODO_CURRENT.md`. Default LLVM backend unaffected;
-      full test suite verified clean under it (both `--no-verify` and full
-      SMT `vanic check`).
+- [x] ~~`--backend=c` could abort with "loop bound out of vec range" on
+      `_bn_mag_add`~~ -- was a real C-backend optimizer-hint bug (BUG-3),
+      **fixed upstream 2026-07-24**. Full test suite + example verified
+      clean on both backends after the fix.
+
+---
+
+## v0.1.1 (2026-07-25)
+
+- [x] Added `#[bounded_stack(bytes = 257)]` to `implement Eq for BigInt`'s
+      `eq` method, dropping the `--allow-partial-safety-coverage` escape
+      hatch v0.1.0 needed -- vani-compiler's BUG-4 (parser rejected
+      `#[attr]`-prefixed methods inside `implement` blocks) is now fixed.
+      `vanic audit-safety` reports full coverage with no gaps.
+- [x] Full test suite + example re-verified on both backends after the
+      BUG-3 fix (previously LLVM-only).
 
 ---
 

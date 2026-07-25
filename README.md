@@ -63,16 +63,6 @@ native `i64` `/`/`%` semantics rather than floor division.
 - Compiler builtins that already exist and must NOT be reimplemented here:
   `push` `pop` `len` `set` `vec` `str_byte_at` `str_pad_left` `i64_to_str`
 
-## Known issue: `--backend=c`
-
-This package's tests pass cleanly under the default LLVM backend (`vanic run`,
-`vanic build`, `vanic test`). Under `--backend=c`, `_bn_mag_add` (and functions
-that call it, i.e. most of the library) can abort with `loop bound out of vec
-range` -- a real compiler bug in the C backend's `while`-loop bounds-checking
-optimizer hint, not a bug in this package. Tracked upstream as BUG-3 in
-[vani-compiler/docs/TODO_CURRENT.md](https://github.com/enthusiasticgeek/vani-compiler/blob/main/docs/TODO_CURRENT.md).
-Use the default LLVM backend.
-
 ## License
 
 MIT

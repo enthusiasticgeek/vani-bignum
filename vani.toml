@@ -1,10 +1,10 @@
 [package]
 name    = "bignum"
-version = "0.1.2"
+version = "0.2.0"
 entry   = "src/lib.vani"
 authors = "enthusiasticgeek"
 license = "MIT"
-description = "Arbitrary-precision integers for vāṇी: base-1e9 digit-array arithmetic (add/sub/mul/div/mod/cmp/gcd), pure vāṇी, no compiler support needed. Numeric foundation for the planned symbolic-math tier."
+description = "Arbitrary-precision integers and rationals for vāṇी: base-1e9 digit-array BigInt arithmetic (add/sub/mul/div/mod/cmp/gcd/pow), plus a Rational type in lowest terms, pure vāṇी, no compiler support needed. Numeric foundation for the planned symbolic-math tier."
 registry = "kosh"
 
 [deps]

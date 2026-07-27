@@ -743,3 +743,159 @@ fn bn_pow_mod(a: ref BigInt, exp: i64, m: ref BigInt) -> BigInt {
     }
     return result;
 }
+
+// ── Rational numbers (v0.2.0) ────────────────────────────────────────────
+
+// Arbitrary-precision rational num/den, always kept in lowest terms with
+// den > 0 (the sign lives entirely in num) -- the canonical normal form
+// every function below assumes on input and restores on output, same
+// "one canonical form" discipline as BigInt's own zero=sign0/limbs=empty
+// invariant. NOT Copy (owns two BigInts); every function takes ref/mut
+// ref Rational and returns Rational by value, same convention as BigInt.
+struct Rational {
+    num: BigInt,
+    den: BigInt,
+}
+
+// Smart constructor: reduces to lowest terms via bn_gcd and normalizes
+// den to be positive (negating both num and den first if den arrived
+// negative -- num/den and (-num)/(-den) are the same value). den must be
+// nonzero (a zero denominator is mathematically undefined, not just
+// "unreduced" -- same class of precondition as bn_div_mod's own
+// "assert b.sign != 0").
+#[bounded_stack(bytes = 2056)]
+fn rat_new(num: BigInt, den: BigInt) -> Rational {
+    assert !bn_is_zero(ref den);
+    let n2: BigInt = num;
+    let d2: BigInt = den;
+    if bn_sign(ref d2) < 0 {
+        n2 = bn_neg(ref n2);
+        d2 = bn_neg(ref d2);
+    }
+    let g: BigInt = bn_gcd(ref n2, ref d2);
+    let num_r: BigInt = bn_div(ref n2, ref g);
+    let den_r: BigInt = bn_div(ref d2, ref g);
+    return Rational { num: num_r, den: den_r };
+}
+
+// n/1 -- already in lowest terms (gcd(n,1) = 1 always), so this
+// constructs directly rather than routing through rat_new's gcd/div work.
+#[bounded_stack(bytes = 400)]
+fn rat_from_i64(n: i64) -> Rational {
+    let num: BigInt = bn_from_i64(n);
+    let den: BigInt = bn_from_i64(1);
+    return Rational { num: num, den: den };
+}
+
+// "num/den" decimal string, e.g. "3/4" or "-3/4" (never "-3/-4" -- den is
+// always positive in the canonical form). Always shows the denominator,
+// even when it's 1 (e.g. "5/1"), matching this package's own preference
+// for an explicit, unambiguous representation over a prettier
+// special-cased one.
+#[bounded_stack(bytes = 184)]
+fn rat_to_str(r: ref Rational) -> OwnedStr {
+    let out: OwnedStr = bn_to_str(ref r.num);
+    out = out + "/";
+    out = out + bn_to_str(ref r.den);
+    return out;
+}
+
+#[bounded_stack(bytes = 82)]
+#[wcet(cycles = 24)]
+fn rat_is_zero(r: ref Rational) -> bool {
+    return bn_is_zero(ref r.num);
+}
+
+#[bounded_stack(bytes = 424)]
+// NO #[wcet]: calls bn_neg/_bn_copy_limbs, both runtime-Vec-length-bounded.
+fn rat_neg(r: ref Rational) -> Rational {
+    let num: BigInt = bn_neg(ref r.num);
+    let den: BigInt = _bn_copy(ref r.den);
+    return Rational { num: num, den: den };
+}
+
+#[bounded_stack(bytes = 424)]
+// NO #[wcet]: see rat_neg.
+fn rat_abs(r: ref Rational) -> Rational {
+    let num: BigInt = bn_abs(ref r.num);
+    let den: BigInt = _bn_copy(ref r.den);
+    return Rational { num: num, den: den };
+}
+
+// a/b + c/d = (a*d + c*b) / (b*d), reduced by rat_new.
+#[bounded_stack(bytes = 2264)]
+fn rat_add(a: ref Rational, b: ref Rational) -> Rational {
+    let ad: BigInt = bn_mul(ref a.num, ref b.den);
+    let cb: BigInt = bn_mul(ref b.num, ref a.den);
+    let num: BigInt = bn_add(ref ad, ref cb);
+    let den: BigInt = bn_mul(ref a.den, ref b.den);
+    return rat_new(num, den);
+}
+
+// a/b - c/d = (a*d - c*b) / (b*d), reduced by rat_new.
+#[bounded_stack(bytes = 2264)]
+fn rat_sub(a: ref Rational, b: ref Rational) -> Rational {
+    let ad: BigInt = bn_mul(ref a.num, ref b.den);
+    let cb: BigInt = bn_mul(ref b.num, ref a.den);
+    let num: BigInt = bn_sub(ref ad, ref cb);
+    let den: BigInt = bn_mul(ref a.den, ref b.den);
+    return rat_new(num, den);
+}
+
+// (a/b) * (c/d) = (a*c) / (b*d), reduced by rat_new.
+#[bounded_stack(bytes = 2200)]
+fn rat_mul(a: ref Rational, b: ref Rational) -> Rational {
+    let num: BigInt = bn_mul(ref a.num, ref b.num);
+    let den: BigInt = bn_mul(ref a.den, ref b.den);
+    return rat_new(num, den);
+}
+
+// (a/b) / (c/d) = (a*d) / (b*c), reduced by rat_new. b's numerator must
+// be nonzero (dividing by the rational zero is undefined).
+#[bounded_stack(bytes = 2200)]
+fn rat_div(a: ref Rational, b: ref Rational) -> Rational {
+    assert !bn_is_zero(ref b.num);
+    let num: BigInt = bn_mul(ref a.num, ref b.den);
+    let den: BigInt = bn_mul(ref a.den, ref b.num);
+    return rat_new(num, den);
+}
+
+// Cross-multiply comparison: a.num*b.den vs b.num*a.den. Correct without
+// a sign case-split (unlike BigInt's own bn_cmp) because rat_new's
+// normal form guarantees both denominators are already positive.
+#[bounded_stack(bytes = 1616)]
+fn rat_cmp(a: ref Rational, b: ref Rational) -> i64 {
+    let lhs: BigInt = bn_mul(ref a.num, ref b.den);
+    let rhs: BigInt = bn_mul(ref b.num, ref a.den);
+    return bn_cmp(ref lhs, ref rhs);
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_eq(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) == 0;
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_ne(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) != 0;
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_lt(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) < 0;
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_le(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) <= 0;
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_gt(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) > 0;
+}
+
+#[bounded_stack(bytes = 1616)]
+fn rat_ge(a: ref Rational, b: ref Rational) -> bool {
+    return rat_cmp(a, b) >= 0;
+}

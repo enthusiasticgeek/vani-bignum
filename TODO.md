@@ -119,12 +119,49 @@
       edge case. Full suite + `vanic audit-safety` re-verified on both
       backends after the change.
 
+## v0.2.0 (2026-07-27)
+
+- [x] `struct Rational { num: BigInt, den: BigInt }` -- always kept in
+      lowest terms with `den > 0` (sign lives entirely in `num`), the
+      canonical normal form every function assumes on input and restores
+      on output, same "one canonical form" discipline as `BigInt`'s own
+      zero=`sign0`/`limbs=empty` invariant.
+- [x] `rat_new(num, den)` -- smart constructor: reduces via `bn_gcd` and
+      normalizes `den`'s sign (negating both if `den` arrived negative).
+      `den` must be nonzero (`assert`, same precondition class as
+      `bn_div_mod`'s divisor). `rat_from_i64` skips the reduction (`n/1`
+      is trivially already in lowest terms).
+- [x] `rat_add`/`rat_sub`/`rat_mul`/`rat_div`/`rat_neg`/`rat_abs` --
+      composed entirely from existing `BigInt` operations (the standard
+      cross-multiply formulas), each result re-reduced via `rat_new`
+      except `rat_neg`/`rat_abs` (negating/abs-ing the numerator can't
+      change the gcd with `den`, so these skip the redundant reduction).
+- [x] `rat_cmp` + wrappers (`rat_eq`/`rat_ne`/`rat_lt`/`rat_le`/`rat_gt`/
+      `rat_ge`) -- cross-multiply comparison, correct without a sign
+      case-split (unlike `BigInt`'s own `bn_cmp`) because the normal form
+      guarantees both denominators are already positive. No `implement Eq
+      for Rational` operator sugar in this pass -- `BigInt`'s own
+      `interface Eq` is hard-coded to `self: ref BigInt`, so `Rational`
+      would need its own separately-named interface, and it's unclear
+      whether `==`/`!=` sugar recognizes a non-`Eq`-named interface;
+      skipped rather than risk getting it subtly wrong for a nice-to-have
+      (`rat_eq`/`rat_ne` cover the same need as plain functions, matching
+      `bn_eq`/`bn_ne`'s own role alongside `BigInt`'s `Eq` impl).
+- [x] `rat_to_str` -- always-explicit `"num/den"` format (even `den=1`
+      shows as `"5/1"`, not simplified to `"5"`), matching this package's
+      preference for an unambiguous representation over a prettier
+      special-cased one.
+- [x] `tests/test_rational.vani` -- reduction from both a negative
+      numerator and a negative denominator (both must land on `-3/4`),
+      arithmetic cross-checked against Python's `fractions.Fraction`, and
+      a large-number case where the reduction happens to land on a whole
+      number (`den=1`) -- caught during development that my first
+      hand-guessed expected value for this case was wrong; recomputed
+      with Python rather than trusting the hand guess. Full suite +
+      `vanic audit-safety` re-verified on both backends.
+
 ## Future
 
-- **v0.2.0: Rational numbers** -- `struct Rational { num: BigInt, den: BigInt
-  }`, reduced via `bn_gcd`, arithmetic composed from `BigInt`'s operations.
-  The natural next step once this integer layer has had real usage; not
-  started.
 - Fixed-size-array (`[i64; N]`) sort-style dual API was considered and
   rejected for this package -- `BigInt`'s size is inherently dynamic
   (arbitrary precision), so there's no analogous fixed-size form.

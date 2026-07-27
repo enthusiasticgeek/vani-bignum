@@ -1,0 +1,83 @@
+// Tests for the Rational struct (v0.2.0): construction/reduction,
+// arithmetic, and comparisons. Reference values cross-checked against
+// Python's fractions.Fraction, not hand-computed.
+// Run with:  vanic test tests/test_rational.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // Construction reduces to lowest terms and normalizes the sign onto
+    // the numerator: 6/-8 and -6/8 both reduce to -3/4.
+    let neg_den: BigInt = bn_from_i64(6);
+    let neg_den_d: BigInt = bn_from_i64(0 - 8);
+    let r1: Rational = rat_new(neg_den, neg_den_d);
+    assert bn_to_i64(ref r1.num) == 0 - 3;
+    assert bn_to_i64(ref r1.den) == 4;
+
+    let neg_num: BigInt = bn_from_i64(0 - 6);
+    let neg_num_d: BigInt = bn_from_i64(8);
+    let r2: Rational = rat_new(neg_num, neg_num_d);
+    assert bn_to_i64(ref r2.num) == 0 - 3;
+    assert bn_to_i64(ref r2.den) == 4;
+    assert rat_eq(ref r1, ref r2);
+
+    // rat_to_str renders the reduced "num/den" form, not the unreduced
+    // constructor arguments.
+    assert rat_to_str(ref r1) == "-3/4";
+
+    // a = 3/4, b = 1/6 -- arithmetic cross-checked against Python's
+    // fractions.Fraction(3,4) / Fraction(1,6).
+    let a_num: BigInt = bn_from_i64(3);
+    let a_den: BigInt = bn_from_i64(4);
+    let a: Rational = rat_new(a_num, a_den);
+    let b_num: BigInt = bn_from_i64(1);
+    let b_den: BigInt = bn_from_i64(6);
+    let b: Rational = rat_new(b_num, b_den);
+
+    let sum: Rational = rat_add(ref a, ref b);
+    assert rat_to_str(ref sum) == "11/12";
+
+    let diff: Rational = rat_sub(ref a, ref b);
+    assert rat_to_str(ref diff) == "7/12";
+
+    let prod: Rational = rat_mul(ref a, ref b);
+    assert rat_to_str(ref prod) == "1/8";
+
+    let quot: Rational = rat_div(ref a, ref b);
+    assert rat_to_str(ref quot) == "9/2";
+
+    let neg_a: Rational = rat_neg(ref a);
+    assert rat_to_str(ref neg_a) == "-3/4";
+    assert rat_eq(ref neg_a, ref r1);
+
+    let abs_neg_a: Rational = rat_abs(ref neg_a);
+    assert rat_to_str(ref abs_neg_a) == "3/4";
+
+    // Comparisons: a (3/4) > b (1/6).
+    assert rat_gt(ref a, ref b);
+    assert rat_lt(ref b, ref a);
+    assert rat_ge(ref a, ref a);
+    assert rat_le(ref a, ref a);
+    assert rat_ne(ref a, ref b);
+    assert !rat_eq(ref a, ref b);
+
+    // rat_from_i64 is exact and already reduced (den = 1).
+    let five: Rational = rat_from_i64(5);
+    assert bn_to_i64(ref five.num) == 5;
+    assert bn_to_i64(ref five.den) == 1;
+    assert !rat_is_zero(ref five);
+
+    let zero: Rational = rat_from_i64(0);
+    assert rat_is_zero(ref zero);
+
+    // A large-numerator/denominator case (Python-computed via
+    // fractions.Fraction, not hand-computed): 9 evenly divides
+    // 123456789012345678901234567890, so this reduces all the way to a
+    // whole number (den = 1) via a genuinely multi-limb gcd.
+    let big_num: BigInt = bn_from_str("123456789012345678901234567890");
+    let big_den: BigInt = bn_from_str("9");
+    let big_r: Rational = rat_new(big_num, big_den);
+    assert rat_to_str(ref big_r) == "13717421001371742100137174210/1";
+
+    return 0;
+}

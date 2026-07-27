@@ -694,3 +694,52 @@ fn bn_gcd(a: ref BigInt, b: ref BigInt) -> BigInt {
     }
     return x;
 }
+
+// ── Exponentiation ───────────────────────────────────────────────────────
+
+// a^exp via exponentiation by squaring. exp must be nonnegative (no
+// Rational type yet to represent a negative-exponent result). exp = 0
+// returns 1 regardless of a, including a = 0 (standard 0^0 = 1
+// convention, matching pow()/i64_pow-style builtins elsewhere).
+#[bounded_stack(bytes = 696)]
+// NO #[wcet]: loop count is log2(exp) but each bn_mul's own cost depends
+// on the growing operands' limb counts -- not expressible to the
+// checker's WCET model, same situation as bn_gcd.
+fn bn_pow_i64(a: ref BigInt, exp: i64) -> BigInt {
+    assert exp >= 0;
+    let result: BigInt = bn_from_i64(1);
+    let base: BigInt = _bn_copy(a);
+    let e: i64 = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result = bn_mul(ref result, ref base);
+        }
+        base = bn_mul(ref base, ref base);
+        e = e / 2;
+    }
+    return result;
+}
+
+// Modular exponentiation: a^exp mod m. Same squaring loop as bn_pow_i64,
+// but reduces mod m after every multiply so intermediate magnitudes stay
+// bounded by m's own limb count instead of growing with exp. exp must be
+// nonnegative; m must be nonzero (bn_mod's own precondition).
+#[bounded_stack(bytes = 1904)]
+// NO #[wcet]: see bn_pow_i64.
+fn bn_pow_mod(a: ref BigInt, exp: i64, m: ref BigInt) -> BigInt {
+    assert exp >= 0;
+    let one: BigInt = bn_from_i64(1);
+    let result: BigInt = bn_mod(ref one, m);
+    let base: BigInt = bn_mod(a, m);
+    let e: i64 = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            let prod: BigInt = bn_mul(ref result, ref base);
+            result = bn_mod(ref prod, m);
+        }
+        let sq: BigInt = bn_mul(ref base, ref base);
+        base = bn_mod(ref sq, m);
+        e = e / 2;
+    }
+    return result;
+}

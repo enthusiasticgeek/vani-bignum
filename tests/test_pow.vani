@@ -1,0 +1,54 @@
+// Tests for bn_pow_i64 and bn_pow_mod. Small cases hand-verified; the
+// large bn_pow_i64 case and every bn_pow_mod case cross-checked against
+// Python (pow(base, exp) / pow(base, exp, m)), not hand-computed.
+// Run with:  vanic test tests/test_pow.vani
+
+use "../src/lib.vani";
+
+fn main() -> i64 {
+    // exp = 0 -> 1, regardless of base (including base = 0).
+    let three: BigInt = bn_from_i64(3);
+    let p0: BigInt = bn_pow_i64(ref three, 0);
+    assert bn_to_i64(ref p0) == 1;
+    let zero: BigInt = bn_zero();
+    let p0z: BigInt = bn_pow_i64(ref zero, 0);
+    assert bn_to_i64(ref p0z) == 1;
+
+    // Small even/odd exponents.
+    let two: BigInt = bn_from_i64(2);
+    let p10: BigInt = bn_pow_i64(ref two, 10);
+    assert bn_to_i64(ref p10) == 1024;
+
+    let seven: BigInt = bn_from_i64(7);
+    let p5: BigInt = bn_pow_i64(ref seven, 5);
+    assert bn_to_i64(ref p5) == 16807;
+
+    // Multi-limb result (2^100, Python-computed).
+    let p100: BigInt = bn_pow_i64(ref two, 100);
+    assert bn_to_str(ref p100) == "1267650600228229401496703205376";
+
+    // Negative base, odd/even exponent -- sign follows the usual rule.
+    let neg2: BigInt = bn_from_i64(0 - 2);
+    let pneg_odd: BigInt = bn_pow_i64(ref neg2, 3);
+    assert bn_to_i64(ref pneg_odd) == 0 - 8;
+    let pneg_even: BigInt = bn_pow_i64(ref neg2, 4);
+    assert bn_to_i64(ref pneg_even) == 16;
+
+    // Modular exponentiation, cross-checked against Python's pow(a, e, m).
+    let m50: BigInt = bn_from_i64(50);
+    let pm1: BigInt = bn_pow_mod(ref three, 200, ref m50);
+    assert bn_to_i64(ref pm1) == 1;
+
+    let five: BigInt = bn_from_i64(5);
+    let m97: BigInt = bn_from_i64(97);
+    let pm2: BigInt = bn_pow_mod(ref five, 117, ref m97);
+    assert bn_to_i64(ref pm2) == 77;
+
+    // m = 1 -> always 0.
+    let one_m: BigInt = bn_from_i64(1);
+    let pm3: BigInt = bn_pow_mod(ref two, 0, ref one_m);
+    assert bn_to_i64(ref pm3) == 0;
+
+    print "pow ok";
+    return 0;
+}

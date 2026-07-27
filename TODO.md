@@ -97,14 +97,34 @@
 
 ---
 
+## v0.1.2 (2026-07-26)
+
+- [x] `bn_pow_i64(a, exp)` -- exponentiation by squaring, `exp >= 0`
+      enforced via `assert` (no `Rational` type yet to represent a
+      negative-exponent result). `exp = 0` returns 1 for any `a`
+      (including 0), matching the standard `0^0 = 1` convention.
+      `#[bounded_stack(bytes = 696)]`, `vanic check`'s exact reported
+      worst-case (chain `bn_pow_i64 -> bn_mul -> _bn_strip`); no
+      `#[wcet]` -- same "loop count is data-dependent" situation as
+      `bn_gcd`.
+- [x] `bn_pow_mod(a, exp, m)` -- modular exponentiation, same squaring
+      loop but reduces mod `m` after every multiply so intermediate
+      magnitudes stay bounded by `m` instead of growing with `exp`.
+      `#[bounded_stack(bytes = 1904)]` (chain through `bn_mod ->
+      bn_div_mod -> _bn_divmod_nonneg -> ... -> _bn_strip`).
+- [x] `tests/test_pow.vani` -- 0-exponent identity (incl. `0^0`), small
+      even/odd exponents, a multi-limb result (`2^100`, Python-computed),
+      negative-base sign propagation, and `bn_pow_mod` cross-checked
+      against Python's `pow(a, e, m)` for two cases plus the `m = 1`
+      edge case. Full suite + `vanic audit-safety` re-verified on both
+      backends after the change.
+
 ## Future
 
 - **v0.2.0: Rational numbers** -- `struct Rational { num: BigInt, den: BigInt
   }`, reduced via `bn_gcd`, arithmetic composed from `BigInt`'s operations.
   The natural next step once this integer layer has had real usage; not
   started.
-- `bn_pow_i64` (exponentiation by squaring) / modular exponentiation --
-  straightforward once needed, deferred as non-foundational.
 - Fixed-size-array (`[i64; N]`) sort-style dual API was considered and
   rejected for this package -- `BigInt`'s size is inherently dynamic
   (arbitrary precision), so there's no analogous fixed-size form.

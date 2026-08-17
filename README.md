@@ -10,6 +10,8 @@ Copy-struct sibling libraries ([vani-complex](https://github.com/enthusiasticgee
 [vani-interval](https://github.com/enthusiasticgeek/vani-interval)). Closer in shape to the
 `Vec`-owning-struct libraries ([vani-sparse](https://github.com/enthusiasticgeek/vani-sparse)).
 
+**API reference / tutorial:** <https://enthusiasticgeek.github.io/vani-bignum/>
+
 ## Add to your project
 
 ```toml

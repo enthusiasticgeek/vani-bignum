@@ -61,6 +61,13 @@ fn main() -> i64 {
     assert rat_ne(ref a, ref b);
     assert !rat_eq(ref a, ref b);
 
+    // rat_cmp directly (the other comparisons all wrap this, but it had no
+    // direct call site of its own): a (3/4) > b (1/6) -> 1; b < a -> -1;
+    // a compared with itself -> 0.
+    assert rat_cmp(ref a, ref b) == 1;
+    assert rat_cmp(ref b, ref a) == 0 - 1;
+    assert rat_cmp(ref a, ref a) == 0;
+
     // rat_from_i64 is exact and already reduced (den = 1).
     let five: Rational = rat_from_i64(5);
     assert bn_to_i64(ref five.num) == 5;

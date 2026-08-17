@@ -12,7 +12,7 @@
 ### Construction / IO (5 functions)
 - [x] `bn_zero`, `bn_from_i64` -- build from nothing / a plain `i64`
 - [x] `bn_from_str` -- decimal string parse (optional leading `-`), hand-parsed
-      byte-by-byte via `str_byte_at` (no str-to-int builtin exists in vāṇी)
+      byte-by-byte via `str_byte_at` (no str-to-int builtin exists in vāṇī)
 - [x] `bn_to_str` -- decimal string format, most-significant limb first
 - [x] `bn_to_i64` -- reconstructs via real `i64` arithmetic, so it naturally
       traps if the value doesn't fit (intentional, matches "everything traps

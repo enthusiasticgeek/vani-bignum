@@ -1,6 +1,6 @@
 // vani-bignum  v0.1.0 — arbitrary-precision integers
 //
-// IMPORTANT — do NOT reimplement vāṇी compiler builtins.
+// IMPORTANT — do NOT reimplement vāṇī compiler builtins.
 // Already available as builtins (call directly, never redeclare here):
 //   push pop len vec str_byte_at str_pad_left i64_to_str
 //
@@ -8,7 +8,7 @@
 //
 // ENCODING: little-endian base-1e9 limbs (limbs[0] = least significant).
 // Chosen because (a) a single limb product is < 1e18, safely inside i64's
-// range (vāṇी has no i128 -- confirmed nothing wider than i64 exists, and
+// range (vāṇī has no i128 -- confirmed nothing wider than i64 exists, and
 // +/-/* trap on overflow rather than wrap, so every intermediate value in
 // this file must provably stay inside i64), and (b) base 1e9 makes decimal
 // string conversion trivial (9 digits per limb, no base-conversion math).
@@ -26,7 +26,7 @@
 //
 // SIGN CONVENTION for division: bn_div_mod truncates toward zero (quotient
 // sign = sign(a) * sign(b), remainder sign = sign(a) when nonzero) --
-// deliberately matching vāṇी's native i64 `/`/`%` semantics (confirmed
+// deliberately matching vāṇī's native i64 `/`/`%` semantics (confirmed
 // sdiv/srem, C-style truncation) rather than floor division, so behavior
 // is predictable relative to the rest of the language.
 //
@@ -43,7 +43,7 @@
 //    own sort_by fallback).
 //  - bn_from_str parses digit-by-digit via repeated multiply-by-10 + add
 //    (str_byte_at + `- 48` for the digit value; no str-to-int builtin
-//    exists in vāṇी to reach for instead) -- O(n^2), same tradeoff.
+//    exists in vāṇī to reach for instead) -- O(n^2), same tradeoff.
 //
 // WCET (MAINT-1 discipline, see kosh-index/ROADMAP.md): every
 // #[wcet(cycles=N)] below is vanic check's own exact reported worst-case,
@@ -93,7 +93,7 @@ fn bn_from_i64(n: i64) -> BigInt {
 }
 
 // Decimal string -> BigInt. Accepts an optional leading '-'. No str-to-int
-// builtin exists in vāṇी, so this hand-parses byte by byte via
+// builtin exists in vāṇī, so this hand-parses byte by byte via
 // str_byte_at + repeated multiply-by-10-and-add (_bn_mul_small_i64 below).
 #[bounded_stack(bytes = 1057)]
 // NO #[wcet]: loop bound is len(s), a runtime value.
@@ -629,7 +629,7 @@ fn _bn_divmod_nonneg(a: ref BigInt, b: ref BigInt) -> BnDivMod {
     return BnDivMod { quot: quot, rem: remainder };
 }
 
-// Truncating division (toward zero, matching vāṇी's native i64 `/`/`%`):
+// Truncating division (toward zero, matching vāṇī's native i64 `/`/`%`):
 // quotient sign = sign(a)*sign(b), remainder sign = sign(a) (0 if the
 // remainder is 0). `b` must be nonzero.
 #[bounded_stack(bytes = 1464)]

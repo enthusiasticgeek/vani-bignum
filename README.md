@@ -1,6 +1,6 @@
 # vani-bignum
 
-Arbitrary-precision integer library for the [vāṇी compiler](https://github.com/enthusiasticgeek/vani-compiler).
+Arbitrary-precision integer library for the [vāṇī compiler](https://github.com/enthusiasticgeek/vani-compiler).
 Numeric foundation for the planned symbolic-math tier (`vani-symbolic`, `vani-polyalgebra`)
 in [kosh-index/ROADMAP.md](https://github.com/enthusiasticgeek/kosh-index/blob/main/ROADMAP.md).
 
@@ -43,7 +43,7 @@ struct BigInt { limbs: Vec<i64>, sign: i64 }
 ```
 
 Little-endian base-1,000,000,000 (1e9) limbs (`limbs[0]` is least significant).
-Base 1e9 is chosen because vāṇी has no integer type wider than `i64` (confirmed --
+Base 1e9 is chosen because vāṇī has no integer type wider than `i64` (confirmed --
 no `i128`) and `+`/`-`/`*` trap on overflow rather than wrap, so every intermediate
 value in a limb operation must provably fit in `i64`; a single limb product is
 under 1e18, safely inside range. It also makes decimal string conversion trivial
@@ -54,7 +54,7 @@ Zero is the canonical form `sign=0, limbs=vec()` (empty, not `[0]`); every nonze
 value has a nonzero most-significant limb (no leading zero limbs).
 
 **Division convention**: `bn_div_mod` truncates toward zero (quotient sign =
-`sign(a) * sign(b)`, remainder sign = `sign(a)`), deliberately matching vāṇी's
+`sign(a) * sign(b)`, remainder sign = `sign(a)`), deliberately matching vāṇī's
 native `i64` `/`/`%` semantics rather than floor division.
 
 ## What this library does NOT provide

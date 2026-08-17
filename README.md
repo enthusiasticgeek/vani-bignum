@@ -15,7 +15,7 @@ Copy-struct sibling libraries ([vani-complex](https://github.com/enthusiasticgee
 ```toml
 # vani.toml
 [deps]
-bignum = { registry = "kosh", version = "^0.1" }
+bignum = { registry = "kosh", version = "^0.2" }
 ```
 
 ```sh
@@ -23,7 +23,7 @@ vanic add bignum
 vanic build
 ```
 
-## What's included (v0.1.0 — integers only; see TODO.md)
+## What's included (v0.2.0 — integers + rationals; see TODO.md)
 
 | Module | Functions |
 |---|---|
@@ -31,7 +31,8 @@ vanic build
 | Sign / predicates | `bn_sign`, `bn_is_zero`, `bn_neg`, `bn_abs` |
 | Comparison | `bn_cmp`, `bn_eq`, `bn_ne`, `bn_lt`, `bn_le`, `bn_gt`, `bn_ge`, `implement Eq for BigInt` (`==`/`!=` work directly) |
 | Arithmetic | `bn_add`, `bn_sub`, `bn_mul`, `bn_div_mod`, `bn_div`, `bn_mod` |
-| GCD | `bn_gcd` |
+| GCD / exponentiation | `bn_gcd`, `bn_pow_i64` (squaring), `bn_pow_mod` (modular, reduces after every multiply) |
+| Rational numbers (v0.2.0) | `struct Rational { num: BigInt, den: BigInt }`, `rat_new` (reduces to lowest terms via `bn_gcd`), `rat_from_i64`, `rat_to_str`, `rat_is_zero`, `rat_neg`, `rat_abs`, `rat_add`, `rat_sub`, `rat_mul`, `rat_div`, `rat_cmp`, `rat_eq`/`rat_ne`/`rat_lt`/`rat_le`/`rat_gt`/`rat_ge` |
 
 ## Encoding
 
@@ -54,12 +55,8 @@ value has a nonzero most-significant limb (no leading zero limbs).
 `sign(a) * sign(b)`, remainder sign = `sign(a)`), deliberately matching vāṇी's
 native `i64` `/`/`%` semantics rather than floor division.
 
-## What this library does NOT provide (yet)
+## What this library does NOT provide
 
-- **Rational numbers.** Planned as v0.2.0 (`{ num: BigInt, den: BigInt }`, reduced
-  via `bn_gcd`) once this integer layer has had real usage. Not started.
-- **`bn_pow_i64` / modular exponentiation.** Straightforward to add once needed
-  (exponentiation by squaring via `bn_mul`) -- deferred, not foundational.
 - Compiler builtins that already exist and must NOT be reimplemented here:
   `push` `pop` `len` `set` `vec` `str_byte_at` `str_pad_left` `i64_to_str`
 
